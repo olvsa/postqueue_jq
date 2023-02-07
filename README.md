@@ -8,7 +8,7 @@ prints to prometheus's textfile status of the Postfix queue (for multiple Postfi
 postqueue_jq{cfg="postfix-mx",queue="deferred",sender="MAILER-DAEMON"} 3
 ```
 
-##### crontab example query
+##### crontab entry
 ```
 #Ansible: postqueue_jq
 */5 * * * * sleep `jot -r 1 1 17`; /bin/sh /srv/textfiles/postqueue_jq >/dev/null
