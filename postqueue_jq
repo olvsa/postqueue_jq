@@ -1,0 +1,81 @@
+#!/bin/sh
+
+BASE=`dirname $( realpath $0 )`
+SELF=`basename $0`
+
+T0=$(mktemp)
+MTRC="${SELF}"
+PROM="/var/lib/node_exporter/${MTRC}.prom"
+
+echo "# HELP ${MTRC} metric" >"${T0}"
+echo "# TYPE ${MTRC} gauge" >>"${T0}"
+
+B1="/usr/sbin/postqueue"
+B2="/usr/sbin/postmulti"
+B3="/usr/bin/jq"
+
+# postmulti -l
+TX=$(mktemp)
+RS=$( "${B2}" -l >"${TX}" 2>/dev/null ); RV=$?
+if [ ${RV} -ne 0 ]; then
+ printf "%s_failed{cmd=\"%s\"} %s\n" "${MTRC}" "${B2}" "${RV}" >>"${T0}"
+ >"${TX}"
+fi;
+# II == postmulti's instances
+II=$( cat "${TX}" | awk '{ print $4 }' 2>/dev/null ); RV=$?; rm -f "${TX}"
+
+T1=$(mktemp); for obj in ${II}
+do
+ L1=`basename "${obj}"`
+ RS=$( "${B1}" -c "${obj}" -j >"${T1}" 2>/dev/null ); RV=$?
+ if [ ${RV} -ne 0 ]; then
+  printf "%s_failed{cfg=\"%s\",cmd=\"%s\"} %s\n" "${MTRC}" "${L1}" "${B1}" "${RV}" >>"${T0}"
+  continue
+ fi; if [ ! -s "${T1}" ]; then continue; fi
+ # QQ == queues
+ RS=$( cat "${T1}" | "${B3}" -r ".queue_name" >"/tmp/${L1}" ); RV=$?
+ if [ ${RV} -ne 0 ]; then
+  printf "%s_failed{cfg=\"%s\",cmd=\"%s\"} %s\n" "${MTRC}" "${L1}" "${B3}" "${RV}" >>"${T0}"
+  rm -r "/tmp/${L1}"; continue
+ fi
+ QQ=$( cat "/tmp/${L1}" | sort | uniq 2>/dev/null ); RV=$?; rm -f "/tmp/${L1}"
+ if [ ${RV} -ne 0 ]; then
+  printf "%s_failed{cfg=\"%s\",cmd=\"%s\"} %s\n" "${MTRC}" "${L1}" "uniq" "${RV}" >>"${T0}"
+  continue
+ fi
+ # walk queues
+ for q in ${QQ}
+ do
+  # SS == senders
+  RS=$( cat "${T1}" | "${B3}" -r ".sender" >"/tmp/${L1}" ); RV=$?
+  if [ ${RV} -ne 0 ]; then
+   printf "%s_failed{cfg=\"%s\",queue=\"%s\",cmd=\"%s\"} %s\n" "${MTRC}" "${L1}" "${q}" "${B3}" "${RV}" >>"${T0}"
+   rm -r "/tmp/${L1}"; continue
+  fi
+  SS=$( cat "/tmp/${L1}" | sort | uniq 2>/dev/null ); RV=$?; rm -f "/tmp/${L1}"
+  if [ ${RV} -ne 0 ]; then
+   printf "%s_failed{cfg=\"%s\",queue=\"%s\",cmd=\"%s\"} %s\n" "${MTRC}" "${L1}" "${q}" "uniq" "${RV}" >>"${T0}"
+   continue
+  fi
+  # walk senders in queue
+  for s in ${SS}
+  do
+   RS=$( cat "${T1}" | "${B3}" -r "select(.queue_name == \"${q}\" and .sender == \"${s}\") | .sender" >"/tmp/${L1}" ); RV=$?
+   if [ ${RV} -ne 0 ]; then
+    printf "%s_failed{cfg=\"%s\",queue=\"%s\",sender=\"%s\",cmd=\"%s\"} %s\n" "${MTRC}" "${L1}" "${q}" "${s}" "${B3}" "${RV}" >>"${T0}"
+    rm -r "/tmp/${L1}"; continue
+   fi
+   NL=$( cat "/tmp/${L1}" | wc -l 2>/dev/null ); RV=$?; rm -f "/tmp/${L1}"
+   if [ ${RV} -ne 0 ]; then
+    printf "%s_failed{cfg=\"%s\",queue=\"%s\",sender=\"%s\",cmd=\"%s\"} %s\n" "${MTRC}" "${L1}" "${q}" "${s}" "wc" "${RV}" >>"${T0}"
+    continue
+   fi
+   printf "%s{cfg=\"%s\",queue=\"%s\",sender=\"%s\"} %s\n" "${MTRC}" "${L1}" "${q}" "${s}" "${NL}" >>"${T0}"
+  done
+ done
+ rm -f "${T1}"
+done; rm -f "${T1}"
+
+chmod 0644 "${T0}"
+chown "prometheus":"prometheus" "${T0}"
+mv -f "${T0}" "${PROM}"; cat "${PROM}"
