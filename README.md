@@ -1,5 +1,5 @@
 # postqueue_jq
-prints to prometheus's textfile status of the Postfix queue (for multiple Postfix instances):
+prints to prometheus's textfile status of the Postfix queue (for multiple Postfix instances)
 
 ##### postqueue_jq.prom ('cfg' is Postfix instance)
 ```
